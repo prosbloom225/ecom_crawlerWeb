@@ -62,6 +62,7 @@ namespace crawlerWebService {
         // Logging
         private const string userAgent = "Mozilla/5.0 (Windows NT 5.1; rv:31.0) Gecko/20100101 Firefox/31.0";
         private static log4net.ILog logger = log4net.LogManager.GetLogger("Main");
+        //private static string conn = @"user id=sa;password=Cbf@1203;server=WIN-Q3247ROHVCV;Trusted_Connection=no;database=crawlerDB;connection timeout=10";
         private static string conn = @"user id=sa;password=Cbf@1203;server=10.11.75.95\SCHALA;Trusted_Connection=no;database=crawlerDB;connection timeout=10";
 
         // Locks
@@ -487,11 +488,6 @@ namespace crawlerWebService {
         }
 
 
-        private static void output() {
-        }
-        private static void nonlockingOutput() {
-            //new Task(output).Start();
-        }
         private static void threadWaitingRoom(Thread thread) {
             logger.Debug("Thread has entered the waiting room.");
             while (isPaused) {
@@ -556,19 +552,17 @@ namespace crawlerWebService {
                             return;
                         } else {
                             // No pages to crawl, wait for the seeds to repopulate
-                            Thread.Sleep(5000);
+                            while (pagesToVisit.Count == 0) {
+                                Thread.Sleep(5000);
+                            }
                         }
                     }
 
-                    // Lock Bracket
-                    //}
-
-                    // Ok, we're going to getPage, remove from pagesToVisit
                     string triedRemove;
                     pagesToVisit.TryRemove(targetPage, out triedRemove);
                     getPage(targetPage, navFrom);
 
-                    nonlockingOutput();
+
 
                 } catch (Exception ex) {
                     logger.Error("Error in crawlSite. This is a big deal, giving a stack trace too...");
@@ -624,7 +618,7 @@ namespace crawlerWebService {
                         sitecrawler.Name = "workerThread" + crawlerThreadCount;
                         lock (crawlerThreadCountLock)
                             crawlerThreadCount++;
-                        Thread.Sleep(200);
+                        Thread.Sleep(10);
                     }
                 }
             }
@@ -653,7 +647,7 @@ namespace crawlerWebService {
             logger.Debug("Seeding products.  Aww yiss");
             for (int i = 0; i < 250000; i = i + 96) {
                 try {
-                    seedStorage.Enqueue(@"http://www.kohls.com/catalog.jsp?N=0&WS=" + i);
+                    seedStorage.Enqueue(@"http://www.kohls.com/catalog.jsp?N=76757&S=2&WS=" + i);
                 } catch (Exception ex) {
                     logger.Error("Error in seeding products");
                     logger.Error(ex.Message);
@@ -666,28 +660,39 @@ namespace crawlerWebService {
         private static void seedMethod() {
             while (1 == 1) {
                 updateCrawlStats();
-                lock (pagesToVisit) {
-                    if (seedStorage.Count == 0 && pagesToVisit.Count == 0) {
-                        // We're done....
-                        // Stop seed thread and set outOfSeeds so controlThread watches for workers and then completes
-                        logger.Debug("Seed thread is out of seeds.");
-                        outOfSeeds = true;
-                        // We're done here, suicide
-                        return;
-                    } else {
-                        if (pagesToVisit.Count <= 0) {
-                            // seedThread can handle updating crawlStats as she isn't gonna flood the db with queries
-                            //updateCrawlStats();
-                            lock (pagesToVisit) {
-                                pagesToVisit.TryAdd(seedStorage.Peek(), "seed");
-                                seedStorage.Dequeue();
+                if (seedStorage.Count == 0 && pagesToVisit.Count == 0) {
+                    // We're done....
+                    // Stop seed thread and set outOfSeeds so controlThread watches for workers and then completes
+                    logger.Debug("Seed thread is out of seeds.");
+                    outOfSeeds = true;
+                    // We're done here, suicide
+                    return;
+                } else {
+                    if (pagesToVisit.Count <= 0) {
+                        lock (pagesToVisit) {
+                            //pagesToVisit.TryAdd(seedStorage.Peek(), "seed");
+                            //logger.Debug(String.Format("Popping a seed off: {0}", seedStorage.Peek().ToString()));
+                            //seedStorage.Dequeue();
+
+                            // Trying new seed processing
+                            string ret = getHtml(seedStorage.Peek());
+                            seedStorage.Dequeue();
+                            foreach (Match m in Regex.Matches(ret, @"/product/prd-.*\.jsp", RegexOptions.Multiline)) {
+                                logger.Debug(String.Format("PRODUCT ADDED: {0}", m.Value.ToString()));
+                                if (!m.Value.Contains("www.") && !m.Value.ToLower().Contains("http")) {
+                                    Uri result;
+                                    Uri.TryCreate(new Uri(@"http://www.kohls.com"), m.Value, out result);
+                                    pagesToVisit.TryAdd(result.ToString(), "seed");
+                                } else {
+                                    pagesToVisit.TryAdd(m.Value.ToString(), "seed");
+                                }
                             }
                         }
                     }
+                    Thread.Sleep(1000);
                 }
-                Thread.Sleep(1000);
-            }
 
+            }
         }
         private static bool checkImage(string url) {
             // build list of fake image ETags if not exist
@@ -746,6 +751,9 @@ namespace crawlerWebService {
         private static bool shouldVisit(string url, string nav_from) {
             if (url.Contains("edgesuite.net"))
                 nav_from = "img";
+            // Ignore catalog images, we'll get them on the prd page
+            if (nav_from.Equals("img") && nav_from.Contains("catalog.jsp"))
+                return false;
             // Ignore filetypes
             if (url.Contains(".ico") || url.Contains(".css"))
                 return false;
@@ -764,11 +772,22 @@ namespace crawlerWebService {
                 return false;
             if (url.Contains(".shtml"))
                 return false;
+            if (url.Contains("giftcard/"))
+                return false;
+            if (url.Contains("myaccount"))
+                return false;
+            if (url.Contains("js.kohls.com"))
+                return false;
 
             // Ignore catalog pages, wayy too many to count, might have to add them later
             // TODO - add catalog back in, have to strip the queryString first
             if (url.Contains("catalog/"))
                 return false;
+
+            // TODO - temp ignoring all non-prd/catalog0 pages
+            if (!url.Contains("/product/") && !url.Contains("catalog.jsp") && !url.Contains("edgesuite.net"))
+                return false;
+
             return true;
         }
 
@@ -807,7 +826,6 @@ namespace crawlerWebService {
                         Uri result;
                         Uri.TryCreate(new Uri(url), textMatch, out result);
                         textMatch = result.ToString();
-
                     }
                     // Check if we should visit this url
                     if (shouldVisit(textMatch, nav_from)) {
@@ -819,7 +837,10 @@ namespace crawlerWebService {
                             if (pagesToVisit.TryAdd(textMatch, url))
                                 // Log the page manifest creation
                                 logger.Debug("queueing: " + textMatch + " - from: " + url);
-                            else logger.Debug("Queue failed, duplicate detected: " + url);
+                                // Only log stuff thats duplicating not off the catalog0 page
+                            else if (!url.Contains("catalog.jsp"))  {
+                                logger.Debug(String.Format("Queue failed, duplicate detected: {0},{1}", textMatch, url));
+                            }
                         }
                             // We have a duplicate, move along
                         catch (Exception e) {
@@ -911,7 +932,6 @@ namespace crawlerWebService {
                     // Try and add the product, if it fails, we've already crawled it
                     try {
                         productsVisited.TryAdd(productCode, "");
-                        logger.Error("tomsQuery - " + url);
                     } catch {
                         //logger.Info("Error adding product to productsVisited" + productCode);
                     }

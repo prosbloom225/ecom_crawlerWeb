@@ -104,23 +104,28 @@ namespace aspBootstrap {
             graphPanel.Update();
         }
         protected void graphMissingImages(object sender, EventArgs e) {
-            DateTime cacheExpiry = DateTime.Now.AddSeconds(15);
-            lblGraphName.Text = "Missing Images by CrawlID";
+            try {
+                DateTime cacheExpiry = DateTime.Now.AddSeconds(15);
+                lblGraphName.Text = "Missing Images by CrawlID";
 
-            DataTable dt = Cache["dtMissingImageGraph"] as DataTable;
-            if (dt == null) {
-                Cache.Insert("dtMissingImageGraph", Crawler.getGraphData("missingImages"), null, cacheExpiry, System.Web.Caching.Cache.NoSlidingExpiration);
-                dt = Cache["dtMissingImageGraph"] as DataTable;
-            }
-            foreach (DataRow dr in dt.Rows) {
-                ClientScript.RegisterArrayDeclaration("graphData", String.Format("{{y: '{0}', a: {1}}}", dr[0].ToString(), dr[1].ToString()));
-            }
+                DataTable dt = Cache["dtMissingImageGraph"] as DataTable;
+                if (dt == null) {
+                    Cache.Insert("dtMissingImageGraph", Crawler.getGraphData("missingImages"), null, cacheExpiry, System.Web.Caching.Cache.NoSlidingExpiration);
+                    dt = Cache["dtMissingImageGraph"] as DataTable;
+                }
+                foreach (DataRow dr in dt.Rows) {
+                    ClientScript.RegisterArrayDeclaration("graphData", String.Format("{{y: '{0}', a: {1}}}", dr[0].ToString(), dr[1].ToString()));
+                }
 
-            Page.ClientScript.RegisterStartupScript(GetType(),
-                "myKey",
-                "Graph();",
-                true);
-            graphPanel.Update();
+                Page.ClientScript.RegisterStartupScript(GetType(),
+                    "myKey",
+                    "Graph();",
+                    true);
+                graphPanel.Update();
+            } catch (Exception ex) {
+                // Exception handling for graphing fails
+
+            }
         }
 
     }
